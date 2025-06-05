@@ -368,4 +368,11 @@
 		</repository>
 	</repositories>
 
+	<distributionManagement>
+		<snapshotRepository>
+			<id>nexus-snapshots</id>
+			<url>http://10.110.159.21:8081/repository/ecosystem/</url>
+		</snapshotRepository>
+	</distributionManagement>
+
 </project>

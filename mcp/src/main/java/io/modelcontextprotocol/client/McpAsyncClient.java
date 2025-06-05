@@ -149,7 +149,8 @@ public class McpAsyncClient {
 	/**
 	 * Supported protocol versions.
 	 */
-	private List<String> protocolVersions = List.of(McpSchema.LATEST_PROTOCOL_VERSION);
+	private List<String> protocolVersions = List.of(McpSchema.LATEST_PROTOCOL_VERSION,
+			McpSchema.PROTOCOL_VERSION_20241105);
 
 	/**
 	 * Create a new McpAsyncClient with the given transport and session request-response
