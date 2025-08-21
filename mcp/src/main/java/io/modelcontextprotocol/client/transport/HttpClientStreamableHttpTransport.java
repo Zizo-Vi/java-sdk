@@ -13,6 +13,7 @@ import java.net.http.HttpResponse.BodyHandler;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -78,6 +79,8 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 
 	private static final String DEFAULT_ENDPOINT = "/mcp";
 
+	private RequestResponseInterceptor requestInterceptor;
+
 	/**
 	 * HTTP client for sending messages to the server. Uses HTTP POST over the message
 	 * endpoint
@@ -140,6 +143,14 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 		return List.of(ProtocolVersions.MCP_2024_11_05, ProtocolVersions.MCP_2025_03_26);
 	}
 
+	/**
+	 * Sets the request interceptor.
+	 * @param requestInterceptor the request interceptor
+	 */
+	void setRequestInterceptor(RequestResponseInterceptor requestInterceptor) {
+		this.requestInterceptor = requestInterceptor;
+	}
+
 	public static Builder builder(String baseUri) {
 		return new Builder(baseUri);
 	}
@@ -177,8 +188,8 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 				.DELETE();
 			return Mono.from(this.httpRequestCustomizer.customize(builder, "DELETE", uri, null));
 		}).flatMap(requestBuilder -> {
-			var request = requestBuilder.build();
-			return Mono.fromFuture(() -> this.httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()));
+			return Mono
+				.fromFuture(() -> this.sendAsyncWithInterceptor(requestBuilder, HttpResponse.BodyHandlers.ofString()));
 		}).then();
 	}
 
@@ -249,8 +260,8 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 			})
 				.flatMapMany(
 						requestBuilder -> Flux.<ResponseEvent>create(
-								sseSink -> this.httpClient
-									.sendAsync(requestBuilder.build(),
+								sseSink -> this
+									.sendAsyncWithInterceptor(requestBuilder,
 											responseInfo -> ResponseSubscribers.sseToBodySubscriber(responseInfo,
 													sseSink))
 									.whenComplete((response, throwable) -> {
@@ -423,16 +434,18 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 			}).flatMapMany(requestBuilder -> Flux.<ResponseEvent>create(responseEventSink -> {
 
 				// Create the async request with proper body subscriber selection
-				Mono.fromFuture(this.httpClient
-					.sendAsync(requestBuilder.build(), this.toSendMessageBodySubscriber(responseEventSink))
-					.whenComplete((response, throwable) -> {
-						if (throwable != null) {
-							responseEventSink.error(throwable);
-						}
-						else {
-							logger.debug("SSE connection established successfully");
-						}
-					})).onErrorMap(CompletionException.class, t -> t.getCause()).onErrorComplete().subscribe();
+				Mono.fromFuture(
+						this.sendHttpPost(requestBuilder, responseEventSink).whenComplete((response, throwable) -> {
+							if (throwable != null) {
+								responseEventSink.error(throwable);
+							}
+							else {
+								logger.debug("SSE connection established successfully");
+							}
+						}))
+					.onErrorMap(CompletionException.class, t -> t.getCause())
+					.onErrorComplete()
+					.subscribe();
 
 			})).flatMap(responseEvent -> {
 				if (transportSession.markInitialized(
@@ -570,6 +583,21 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 		});
 	}
 
+	private CompletableFuture<HttpResponse<Void>> sendHttpPost(HttpRequest.Builder requestBuilder,
+			FluxSink<ResponseEvent> responseEventSink) {
+		return this.sendAsyncWithInterceptor(requestBuilder, this.toSendMessageBodySubscriber(responseEventSink));
+	}
+
+	private <T> CompletableFuture<HttpResponse<T>> sendAsyncWithInterceptor(HttpRequest.Builder requestBuilder,
+			BodyHandler<T> bodyHandler) {
+		if (this.requestInterceptor != null) {
+			return this.requestInterceptor.interceptRequest(requestBuilder)
+				.thenCompose(request -> this.requestInterceptor.interceptResponse(request,
+						req -> this.httpClient.sendAsync(req, bodyHandler)));
+		}
+		return this.httpClient.sendAsync(requestBuilder.build(), bodyHandler);
+	}
+
 	private static String sessionIdOrPlaceholder(McpTransportSession<?> transportSession) {
 		return transportSession.sessionId().orElse("[missing_session_id]");
 	}
@@ -599,6 +627,8 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 		private boolean openConnectionOnStartup = false;
 
 		private HttpRequest.Builder requestBuilder = HttpRequest.newBuilder();
+
+		private RequestResponseInterceptor requestInterceptor;
 
 		private AsyncHttpRequestCustomizer httpRequestCustomizer = AsyncHttpRequestCustomizer.NOOP;
 
@@ -735,6 +765,16 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 		 */
 		public Builder asyncHttpRequestCustomizer(AsyncHttpRequestCustomizer asyncHttpRequestCustomizer) {
 			this.httpRequestCustomizer = asyncHttpRequestCustomizer;
+			return this;
+		}
+
+		/**
+		 * Sets the request interceptor.
+		 * @param requestInterceptor the request interceptor
+		 * @return this builder
+		 */
+		public Builder requestInterceptor(RequestResponseInterceptor requestInterceptor) {
+			this.requestInterceptor = requestInterceptor;
 			return this;
 		}
 

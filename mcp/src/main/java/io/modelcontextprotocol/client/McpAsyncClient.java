@@ -901,7 +901,7 @@ public class McpAsyncClient {
 	 * code.
 	 * @param protocolVersions the Client supported protocol versions.
 	 */
-	void setProtocolVersions(List<String> protocolVersions) {
+	public void setProtocolVersions(List<String> protocolVersions) {
 		this.initializer.setProtocolVersions(protocolVersions);
 	}
 

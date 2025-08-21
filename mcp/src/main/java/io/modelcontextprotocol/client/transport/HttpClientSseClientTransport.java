@@ -85,6 +85,8 @@ public class HttpClientSseClientTransport implements McpClientTransport {
 	/** SSE endpoint path */
 	private final String sseEndpoint;
 
+	private RequestResponseInterceptor requestInterceptor;
+
 	/**
 	 * HTTP client for sending messages to the server. Uses HTTP POST over the message
 	 * endpoint
@@ -224,6 +226,14 @@ public class HttpClientSseClientTransport implements McpClientTransport {
 	}
 
 	/**
+	 * Sets the request interceptor.
+	 * @param requestInterceptor the request interceptor
+	 */
+	void setRequestInterceptor(RequestResponseInterceptor requestInterceptor) {
+		this.requestInterceptor = requestInterceptor;
+	}
+
+	/**
 	 * Creates a new builder for {@link HttpClientSseClientTransport}.
 	 * @param baseUri the base URI of the MCP server
 	 * @return a new builder instance
@@ -249,6 +259,8 @@ public class HttpClientSseClientTransport implements McpClientTransport {
 
 		private HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
 			.header("Content-Type", "application/json");
+
+		private RequestResponseInterceptor requestInterceptor;
 
 		private AsyncHttpRequestCustomizer httpRequestCustomizer = AsyncHttpRequestCustomizer.NOOP;
 
@@ -384,12 +396,28 @@ public class HttpClientSseClientTransport implements McpClientTransport {
 		}
 
 		/**
+		 * Sets the request interceptor.
+		 * @param requestInterceptor the request interceptor
+		 * @return this builder
+		 */
+		public Builder requestInterceptor(RequestResponseInterceptor requestInterceptor) {
+			this.requestInterceptor = requestInterceptor;
+			return this;
+		}
+
+		/**
 		 * Builds a new {@link HttpClientSseClientTransport} instance.
 		 * @return a new transport instance
 		 */
 		public HttpClientSseClientTransport build() {
-			return new HttpClientSseClientTransport(clientBuilder.build(), requestBuilder, baseUri, sseEndpoint,
-					objectMapper, httpRequestCustomizer);
+			HttpClientSseClientTransport transport = new HttpClientSseClientTransport(clientBuilder.build(),
+					requestBuilder, baseUri, sseEndpoint, objectMapper, httpRequestCustomizer);
+
+			if (requestInterceptor != null) {
+				transport.setRequestInterceptor(requestInterceptor);
+			}
+
+			return transport;
 		}
 
 	}
@@ -397,6 +425,9 @@ public class HttpClientSseClientTransport implements McpClientTransport {
 	@Override
 	public Mono<Void> connect(Function<Mono<JSONRPCMessage>, Mono<JSONRPCMessage>> handler) {
 		var uri = Utils.resolveUri(this.baseUri, this.sseEndpoint);
+		logger.info("baseUri {}", this.baseUri);
+		logger.info("sseEndpoint {}", this.sseEndpoint);
+		logger.info("Connecting to {}", uri);
 
 		return Mono.defer(() -> {
 			var builder = requestBuilder.copy()
@@ -526,16 +557,25 @@ public class HttpClientSseClientTransport implements McpClientTransport {
 
 	private Mono<HttpResponse<String>> sendHttpPost(final String endpoint, final String body) {
 		final URI requestUri = Utils.resolveUri(baseUri, endpoint);
-		return Mono.defer(() -> {
-			var builder = this.requestBuilder.copy()
-				.uri(requestUri)
-				.header(MCP_PROTOCOL_VERSION_HEADER_NAME, MCP_PROTOCOL_VERSION)
-				.POST(HttpRequest.BodyPublishers.ofString(body));
-			return Mono.from(this.httpRequestCustomizer.customize(builder, "POST", requestUri, body));
-		}).flatMap(customizedBuilder -> {
-			var request = customizedBuilder.build();
-			return Mono.fromFuture(httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()));
-		});
+		var builder = this.requestBuilder.copy()
+			.uri(requestUri)
+			.header(MCP_PROTOCOL_VERSION_HEADER_NAME, MCP_PROTOCOL_VERSION)
+			.POST(HttpRequest.BodyPublishers.ofString(body));
+
+		if (this.requestInterceptor != null) {
+			// With interceptor
+			return Mono.fromFuture(() -> this.requestInterceptor.interceptRequest(builder)
+				.thenCompose(request -> this.requestInterceptor.interceptResponse(request,
+						req -> httpClient.sendAsync(req, HttpResponse.BodyHandlers.ofString()))));
+		}
+		else {
+			// Without interceptor
+			return Mono.defer(() -> Mono.from(this.httpRequestCustomizer.customize(builder, "POST", requestUri, body)))
+				.flatMap(customizedBuilder -> {
+					var request = customizedBuilder.build();
+					return Mono.fromFuture(httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()));
+				});
+		}
 	}
 
 	/**
