@@ -616,9 +616,7 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 
 		private ObjectMapper objectMapper;
 
-		private HttpClient.Builder clientBuilder = HttpClient.newBuilder()
-			.version(HttpClient.Version.HTTP_1_1)
-			.connectTimeout(Duration.ofSeconds(10));
+		private HttpClient.Builder clientBuilder = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1);
 
 		private String endpoint = DEFAULT_ENDPOINT;
 
@@ -631,6 +629,8 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 		private RequestResponseInterceptor requestInterceptor;
 
 		private AsyncHttpRequestCustomizer httpRequestCustomizer = AsyncHttpRequestCustomizer.NOOP;
+
+		private Duration connectTimeout = Duration.ofSeconds(10);
 
 		/**
 		 * Creates a new builder with the specified base URI.
@@ -779,6 +779,17 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 		}
 
 		/**
+		 * Sets the connection timeout for the HTTP client.
+		 * @param connectTimeout the connection timeout duration
+		 * @return this builder
+		 */
+		public Builder connectTimeout(Duration connectTimeout) {
+			Assert.notNull(connectTimeout, "connectTimeout must not be null");
+			this.connectTimeout = connectTimeout;
+			return this;
+		}
+
+		/**
 		 * Construct a fresh instance of {@link HttpClientStreamableHttpTransport} using
 		 * the current builder configuration.
 		 * @return a new instance of {@link HttpClientStreamableHttpTransport}
@@ -786,8 +797,10 @@ public class HttpClientStreamableHttpTransport implements McpClientTransport {
 		public HttpClientStreamableHttpTransport build() {
 			ObjectMapper objectMapper = this.objectMapper != null ? this.objectMapper : new ObjectMapper();
 
-			return new HttpClientStreamableHttpTransport(objectMapper, clientBuilder.build(), requestBuilder, baseUri,
-					endpoint, resumableStreams, openConnectionOnStartup, httpRequestCustomizer);
+			HttpClient httpClient = this.clientBuilder.connectTimeout(this.connectTimeout).build();
+
+			return new HttpClientStreamableHttpTransport(objectMapper, httpClient, requestBuilder, baseUri, endpoint,
+					resumableStreams, openConnectionOnStartup, httpRequestCustomizer);
 		}
 
 	}
